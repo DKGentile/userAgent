@@ -1,0 +1,19 @@
+{
+  "name": "aegis-claims-intelligence",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Aegis — Autonomous Claims Intelligence. A single-deployable, AI-powered shipping-insurance claims adjudication platform showcasing agentic decisioning, RAG, document analysis, and SQL orchestration.",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @aegis/server",
+    "build": "npm run build --workspace @aegis/web",
+    "start": "npm run start --workspace @aegis/server",
+    "seed": "npm run seed --workspace @aegis/server",
+    "typecheck": "npm run typecheck --workspace @aegis/server && npm run typecheck --workspace @aegis/web"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  }
+}

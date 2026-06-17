@@ -1,0 +1,34 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# local data (SQLite DB is regenerated from seed on boot)
+apps/server/data/*.db
+apps/server/data/*.db-shm
+apps/server/data/*.db-wal
+.cache/
+.models/
+
+# env / secrets — never commit these
+.env
+.env.local
+.env.*.local
+*.pem
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

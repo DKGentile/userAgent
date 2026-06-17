@@ -1,0 +1,26 @@
+{
+  "name": "@aegis/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "cross-env NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx watch src/index.ts",
+    "start": "cross-env NODE_ENV=production NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/index.ts",
+    "seed": "cross-env NODE_OPTIONS=--disable-warning=ExperimentalWarning tsx src/db/seed.ts --reset",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@fastify/static": "^8.0.3",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7"
+  }
+}

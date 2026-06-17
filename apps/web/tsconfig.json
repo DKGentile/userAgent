@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "useDefineForClassFields": true,
+    "types": ["vite/client"],
+    "paths": {
+      "@shared": ["../../packages/shared/src/index.ts"],
+      "@shared/*": ["../../packages/shared/src/*"],
+      "@/*": ["src/*"]
+    }
+  },
+  "include": ["src", "../../packages/shared/src", "vite.config.ts"]
+}
