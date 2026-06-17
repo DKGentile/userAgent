@@ -46,7 +46,7 @@ context → preflight → documents → tracking → retrieval → reasoning →
 5. **Retrieval (RAG)** — embed the claim's salient facts, cosine-rank them against the knowledge base, and inject the top matches into the prompt.
 6. **Reasoning** — Claude (tool-use + extended thinking) when a key is present, otherwise a deterministic reasoner that applies the same rules. Either way the structured STEP 1–5 reasoning streams token-by-token.
 7. **Guard rails** — a reasoning↔decision **consistency gate** and a **confidence floor**; either can auto-escalate.
-8. **Decision** — persisted with a full audit trail (`agent_decisions` + `agent_changes`), and the claim status updated.
+8. **Decision** — persisted with a full audit trail (`adjudications` + `case_ledger`), and the case status updated.
 
 Open any claim and press **Run agent** to watch all of this happen live.
 

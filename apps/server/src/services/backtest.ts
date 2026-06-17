@@ -2,11 +2,11 @@
  * Evaluation harness. Re-runs the CURRENT agent over every claim that has a
  * human-recorded ground-truth decision and scores agreement, producing a
  * confusion matrix. The entire run executes with the DB WRITE-GUARD armed and
- * scoped to the single `backtest_runs` table — proving an evaluation can never
+ * scoped to the single `eval_runs` table — proving an evaluation can never
  * mutate live claim data (the safety-net pattern from the production agent).
  */
 import { withWriteGuardAsync } from '../db/connection.js';
-import { claimsWithGroundTruth, insertBacktestRun } from '../db/repos.js';
+import { claimsWithGroundTruth, insertEvalRun } from '../db/repos.js';
 import { decideClaim } from './agent/engine.js';
 import type { BacktestRow, BacktestSummary, DecisionKind } from '@shared';
 
@@ -28,7 +28,7 @@ export async function runBacktest(): Promise<BacktestSummary> {
 
   // The guard is armed for the WHOLE evaluation: decideClaim runs with
   // persistence off, and any stray write to a live table would throw here.
-  await withWriteGuardAsync(['backtest_runs'], async () => {
+  await withWriteGuardAsync(['eval_runs'], async () => {
     for (const c of claims) {
       const truth = c.groundTruthDecision!;
       const d = await decideClaim(c.id);
@@ -59,7 +59,7 @@ export async function runBacktest(): Promise<BacktestSummary> {
       avgTookMs: total ? rows.reduce((s, r) => s + r.tookMs, 0) / total : 0,
       finishedAt: new Date().toISOString(),
     };
-    insertBacktestRun(summary); // allowed table — passes the guard
+    insertEvalRun(summary); // allowed table — passes the guard
     _last = summary;
   });
 

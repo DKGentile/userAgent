@@ -445,18 +445,18 @@ function trackingNumber(spec: ClaimSpec, id: number): string {
 export function seedDatabase(db: SqlDb = getDb()): void {
   db.tx(() => {
     for (const c of CARRIERS) {
-      db.run('INSERT INTO carriers (id, code, name, color, presumed_lost_days) VALUES (?,?,?,?,?)', [
+      db.run('INSERT INTO couriers (courier_id, courier_code, courier_name, swatch, transit_loss_threshold_days) VALUES (?,?,?,?,?)', [
         c.id, c.code, c.name, c.color, c.presumed,
       ]);
     }
     for (const cl of CLIENTS) {
       db.run(
-        'INSERT INTO clients (id, name, tier, dom_waiting_days, intl_waiting_days, max_file_days, allow_early_file, handling_note, deductible) VALUES (?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO merchants (merchant_id, merchant_name, service_tier, dom_hold_days, intl_hold_days, file_window_days, allows_early_file, ops_note, deductible_usd) VALUES (?,?,?,?,?,?,?,?,?)',
         [cl.id, cl.name, cl.tier, cl.dom, cl.intl, cl.maxFile, cl.early, cl.note, cl.deductible],
       );
     }
     for (const d of DOC_TYPES) {
-      db.run('INSERT INTO doc_types (id, code, label) VALUES (?,?,?)', [d.id, d.code, d.label]);
+      db.run('INSERT INTO evidence_types (evidence_type_id, evidence_code, evidence_label) VALUES (?,?,?)', [d.id, d.code, d.label]);
     }
 
     CLAIMS.forEach((spec, i) => {
@@ -469,11 +469,11 @@ export function seedDatabase(db: SqlDb = getDb()): void {
       const updatedAt = spec.resolved ? timeISO(spec.resolved.decidedDaysAgo, 16) : createdAt;
 
       db.run(
-        `INSERT INTO claims
-          (id, public_ref, client_id, carrier_id, type, status, item_description, narrative,
-           declared_value, insured_amount, amount_claimed, tracking_number, ship_date, filed_date,
-           origin_zip, dest_zip, is_international, claimant_email, ground_truth_decision, ground_truth_note,
-           created_at, updated_at)
+        `INSERT INTO cases
+          (case_id, case_ref, merchant_id, courier_id, peril, lifecycle_state, goods_description, claimant_statement,
+           declared_usd, coverage_limit_usd, demand_usd, shipment_ref, dispatched_on, filed_on,
+           origin_postal, dest_postal, cross_border, claimant_contact, truth_label, truth_label_note,
+           opened_at, touched_at)
          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           id, publicRef, spec.clientId, spec.carrierId, spec.type, status, spec.item, spec.narrative,
@@ -511,7 +511,7 @@ export function seedDatabase(db: SqlDb = getDb()): void {
           mime = 'image/png';
         }
         db.run(
-          `INSERT INTO claim_documents (claim_id, kind, filename, mime, text_content, analyzed, uploaded_at)
+          `INSERT INTO evidence_items (case_id, evidence_kind, file_name, media_type, ocr_text, is_extracted, captured_at)
            VALUES (?,?,?,?,?,?,?)`,
           [id, doc.kind, filename, mime, text, 0, timeISO(spec.filedDaysAgo, 9)],
         );
@@ -519,7 +519,7 @@ export function seedDatabase(db: SqlDb = getDb()): void {
 
       // Tracking
       for (const ev of buildTracking(spec)) {
-        db.run('INSERT INTO tracking_events (claim_id, ts, status, location) VALUES (?,?,?,?)', [
+        db.run('INSERT INTO scan_history (case_id, scanned_at, scan_status, scan_locale) VALUES (?,?,?,?)', [
           id, ev.ts, ev.status, ev.location,
         ]);
       }
@@ -528,10 +528,10 @@ export function seedDatabase(db: SqlDb = getDb()): void {
       if (spec.resolved) {
         const r = spec.resolved;
         db.run(
-          `INSERT INTO agent_decisions
-            (claim_id, decision, resulting_status, confidence, paid_amount, denial_reason,
-             missing_doc_type_ids, escalation_reason, reasoning, flags, citations, preflights, gates,
-             model, used_real_model, input_tokens, output_tokens, took_ms, decided_at)
+          `INSERT INTO adjudications
+            (case_id, verdict, resulting_state, certainty, award_usd, refusal_basis,
+             requested_evidence, referral_basis, rationale, signals, retrieved, gate_checks, guardrails,
+             engine, engine_is_live, prompt_tokens, completion_tokens, elapsed_ms, ruled_at)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             id, r.agentDecision, r.status, r.confidence, r.paid ?? null, r.denialReason ?? null,
@@ -540,16 +540,16 @@ export function seedDatabase(db: SqlDb = getDb()): void {
           ],
         );
         db.run(
-          `INSERT INTO agent_changes (claim_id, change_type, old_status, new_status, note, created_at)
+          `INSERT INTO case_ledger (case_id, actor, from_state, to_state, memo, logged_at)
            VALUES (?,?,?,?,?,?)`,
-          [id, 'AI_AGENT', 'new', r.status, `Agent recorded: ${r.agentDecision}`, timeISO(r.decidedDaysAgo, 16)],
+          [id, 'agent', 'new', r.status, `Agent recorded: ${r.agentDecision}`, timeISO(r.decidedDaysAgo, 16)],
         );
       }
     });
 
     // Knowledge base (embeddings filled lazily on first boot by the vector store)
     for (const k of KNOWLEDGE) {
-      db.run('INSERT INTO knowledge_chunks (category, title, text, source, embedding) VALUES (?,?,?,?,NULL)', [
+      db.run('INSERT INTO policy_chunks (chunk_kind, heading, body, citation, vector) VALUES (?,?,?,?,NULL)', [
         k.category, k.title, k.text, k.source,
       ]);
     }
@@ -557,8 +557,8 @@ export function seedDatabase(db: SqlDb = getDb()): void {
 }
 
 const DROP_ORDER = [
-  'agent_changes', 'agent_decisions', 'backtest_runs', 'tracking_events',
-  'claim_documents', 'knowledge_chunks', 'claims', 'doc_types', 'clients', 'carriers',
+  'case_ledger', 'adjudications', 'eval_runs', 'scan_history',
+  'evidence_items', 'policy_chunks', 'cases', 'evidence_types', 'merchants', 'couriers',
 ];
 
 export function resetAndSeed(db: SqlDb = getDb()): void {
@@ -569,7 +569,7 @@ export function resetAndSeed(db: SqlDb = getDb()): void {
 
 export function seedIfEmpty(db: SqlDb = getDb()): boolean {
   migrate(db);
-  const row = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM claims');
+  const row = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM cases');
   if ((row?.n ?? 0) > 0) return false;
   seedDatabase(db);
   return true;
@@ -580,8 +580,8 @@ export function seedIfEmpty(db: SqlDb = getDb()): boolean {
 if (process.argv.includes('--reset')) {
   const db = getDb();
   resetAndSeed(db);
-  const n = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM claims')!;
-  const k = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM knowledge_chunks')!;
+  const n = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM cases')!;
+  const k = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM policy_chunks')!;
   // eslint-disable-next-line no-console
   console.log(`✓ Seeded ${n.n} claims and ${k.n} knowledge chunks into ${db.driverName}.`);
 }

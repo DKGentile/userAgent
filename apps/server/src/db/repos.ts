@@ -1,7 +1,8 @@
 /**
  * Repositories — the only place that knows SQL column names. Everything else
  * works with the clean domain types from @shared. Row → domain mapping lives
- * here.
+ * here, which is why the underlying schema can use its own vocabulary
+ * (cases / couriers / merchants / adjudications…) without affecting the app.
  */
 import { getDb } from './connection.js';
 import type {
@@ -26,105 +27,105 @@ const db = () => getDb();
 // ---------------------------------------------------------------------------
 export function listCarriers(): Carrier[] {
   return db()
-    .all<Record<string, any>>('SELECT * FROM carriers ORDER BY id')
-    .map((r) => ({ id: r.id, code: r.code, name: r.name, color: r.color, presumedLostDays: r.presumed_lost_days }));
+    .all<Record<string, any>>('SELECT * FROM couriers ORDER BY courier_id')
+    .map((r) => ({ id: r.courier_id, code: r.courier_code, name: r.courier_name, color: r.swatch, presumedLostDays: r.transit_loss_threshold_days }));
 }
 
 export function getClient(id: number): Client | undefined {
-  const r = db().get<Record<string, any>>('SELECT * FROM clients WHERE id = ?', [id]);
+  const r = db().get<Record<string, any>>('SELECT * FROM merchants WHERE merchant_id = ?', [id]);
   return r ? mapClient(r) : undefined;
 }
 export function listClients(): Client[] {
-  return db().all<Record<string, any>>('SELECT * FROM clients ORDER BY id').map(mapClient);
+  return db().all<Record<string, any>>('SELECT * FROM merchants ORDER BY merchant_id').map(mapClient);
 }
 function mapClient(r: Record<string, any>): Client {
   return {
-    id: r.id,
-    name: r.name,
-    tier: r.tier,
-    domesticWaitingDays: r.dom_waiting_days,
-    intlWaitingDays: r.intl_waiting_days,
-    maxFileDays: r.max_file_days,
-    allowEarlyFile: !!r.allow_early_file,
-    handlingNote: r.handling_note ?? null,
-    deductible: r.deductible,
+    id: r.merchant_id,
+    name: r.merchant_name,
+    tier: r.service_tier,
+    domesticWaitingDays: r.dom_hold_days,
+    intlWaitingDays: r.intl_hold_days,
+    maxFileDays: r.file_window_days,
+    allowEarlyFile: !!r.allows_early_file,
+    handlingNote: r.ops_note ?? null,
+    deductible: r.deductible_usd,
   };
 }
 
 export function listDocTypes(): DocType[] {
   return db()
-    .all<Record<string, any>>('SELECT * FROM doc_types ORDER BY id')
-    .map((r) => ({ id: r.id, code: r.code, label: r.label }));
+    .all<Record<string, any>>('SELECT * FROM evidence_types ORDER BY evidence_type_id')
+    .map((r) => ({ id: r.evidence_type_id, code: r.evidence_code, label: r.evidence_label }));
 }
 export function docTypeIdByCode(code: string): number | undefined {
-  return db().get<{ id: number }>('SELECT id FROM doc_types WHERE code = ?', [code])?.id;
+  return db().get<{ id: number }>('SELECT evidence_type_id AS id FROM evidence_types WHERE evidence_code = ?', [code])?.id;
 }
 
 // ---------------------------------------------------------------------------
-// Claims
+// Cases (claims)
 // ---------------------------------------------------------------------------
-const CLAIM_SELECT = `
-  SELECT c.*, cl.name AS client_name,
-         ca.name AS carrier_name, ca.code AS carrier_code, ca.color AS carrier_color
-  FROM claims c
-  JOIN clients cl ON cl.id = c.client_id
-  JOIN carriers ca ON ca.id = c.carrier_id`;
+const CASE_SELECT = `
+  SELECT c.*, m.merchant_name AS client_name,
+         co.courier_name AS carrier_name, co.courier_code AS carrier_code, co.swatch AS carrier_color
+  FROM cases c
+  JOIN merchants m ON m.merchant_id = c.merchant_id
+  JOIN couriers co ON co.courier_id = c.courier_id`;
 
 export function listClaims(filters: { status?: string; type?: string; q?: string } = {}): ClaimWithRefs[] {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (filters.status) {
-    where.push('c.status = ?');
+    where.push('c.lifecycle_state = ?');
     params.push(filters.status);
   }
   if (filters.type) {
-    where.push('c.type = ?');
+    where.push('c.peril = ?');
     params.push(filters.type);
   }
   if (filters.q) {
-    where.push('(c.item_description LIKE ? OR c.public_ref LIKE ? OR c.narrative LIKE ?)');
+    where.push('(c.goods_description LIKE ? OR c.case_ref LIKE ? OR c.claimant_statement LIKE ?)');
     const like = `%${filters.q}%`;
     params.push(like, like, like);
   }
-  const sql = `${CLAIM_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.filed_date DESC, c.id DESC`;
+  const sql = `${CASE_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.filed_on DESC, c.case_id DESC`;
   return db().all<Record<string, any>>(sql, params).map(mapClaimWithRefs);
 }
 
 export function getClaim(id: number): ClaimWithRefs | undefined {
-  const r = db().get<Record<string, any>>(`${CLAIM_SELECT} WHERE c.id = ?`, [id]);
+  const r = db().get<Record<string, any>>(`${CASE_SELECT} WHERE c.case_id = ?`, [id]);
   return r ? mapClaimWithRefs(r) : undefined;
 }
 
 export function claimsWithGroundTruth(): ClaimWithRefs[] {
   return db()
-    .all<Record<string, any>>(`${CLAIM_SELECT} WHERE c.ground_truth_decision IS NOT NULL ORDER BY c.id`)
+    .all<Record<string, any>>(`${CASE_SELECT} WHERE c.truth_label IS NOT NULL ORDER BY c.case_id`)
     .map(mapClaimWithRefs);
 }
 
 function mapClaim(r: Record<string, any>): Claim {
   return {
-    id: r.id,
-    publicRef: r.public_ref,
-    clientId: r.client_id,
-    carrierId: r.carrier_id,
-    type: r.type as ClaimType,
-    status: r.status as ClaimStatus,
-    itemDescription: r.item_description,
-    narrative: r.narrative,
-    declaredValue: r.declared_value,
-    insuredAmount: r.insured_amount,
-    amountClaimed: r.amount_claimed,
-    trackingNumber: r.tracking_number,
-    shipDate: r.ship_date,
-    filedDate: r.filed_date,
-    originZip: r.origin_zip,
-    destZip: r.dest_zip,
-    isInternational: !!r.is_international,
-    claimantEmail: r.claimant_email,
-    groundTruthDecision: (r.ground_truth_decision ?? null) as DecisionKind | null,
-    groundTruthNote: r.ground_truth_note ?? null,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
+    id: r.case_id,
+    publicRef: r.case_ref,
+    clientId: r.merchant_id,
+    carrierId: r.courier_id,
+    type: r.peril as ClaimType,
+    status: r.lifecycle_state as ClaimStatus,
+    itemDescription: r.goods_description,
+    narrative: r.claimant_statement,
+    declaredValue: r.declared_usd,
+    insuredAmount: r.coverage_limit_usd,
+    amountClaimed: r.demand_usd,
+    trackingNumber: r.shipment_ref,
+    shipDate: r.dispatched_on,
+    filedDate: r.filed_on,
+    originZip: r.origin_postal,
+    destZip: r.dest_postal,
+    isInternational: !!r.cross_border,
+    claimantEmail: r.claimant_contact,
+    groundTruthDecision: (r.truth_label ?? null) as DecisionKind | null,
+    groundTruthNote: r.truth_label_note ?? null,
+    createdAt: r.opened_at,
+    updatedAt: r.touched_at,
   };
 }
 function mapClaimWithRefs(r: Record<string, any>): ClaimWithRefs {
@@ -138,32 +139,32 @@ function mapClaimWithRefs(r: Record<string, any>): ClaimWithRefs {
 }
 
 export function updateClaimStatus(id: number, status: ClaimStatus): void {
-  db().run('UPDATE claims SET status = ?, updated_at = ? WHERE id = ?', [status, new Date().toISOString(), id]);
+  db().run('UPDATE cases SET lifecycle_state = ?, touched_at = ? WHERE case_id = ?', [status, new Date().toISOString(), id]);
 }
 
 // ---------------------------------------------------------------------------
-// Documents
+// Evidence (documents)
 // ---------------------------------------------------------------------------
 export function getDocuments(claimId: number): ClaimDocument[] {
   return db()
-    .all<Record<string, any>>('SELECT * FROM claim_documents WHERE claim_id = ? ORDER BY id', [claimId])
+    .all<Record<string, any>>('SELECT * FROM evidence_items WHERE case_id = ? ORDER BY evidence_id', [claimId])
     .map(mapDocument);
 }
 function mapDocument(r: Record<string, any>): ClaimDocument {
   return {
-    id: r.id,
-    claimId: r.claim_id,
-    kind: r.kind,
-    filename: r.filename,
-    mime: r.mime,
-    textContent: r.text_content ?? null,
-    analyzed: !!r.analyzed,
-    extractedAmount: r.extracted_amount ?? null,
-    extractedTracking: r.extracted_tracking ?? null,
-    extractedDocType: r.extracted_doc_type ?? null,
-    analysisConfidence: r.analysis_confidence ?? null,
-    analysisNotes: r.analysis_notes ?? null,
-    uploadedAt: r.uploaded_at,
+    id: r.evidence_id,
+    claimId: r.case_id,
+    kind: r.evidence_kind,
+    filename: r.file_name,
+    mime: r.media_type,
+    textContent: r.ocr_text ?? null,
+    analyzed: !!r.is_extracted,
+    extractedAmount: r.extracted_value_usd ?? null,
+    extractedTracking: r.extracted_shipment_ref ?? null,
+    extractedDocType: r.extracted_kind ?? null,
+    analysisConfidence: r.extraction_score ?? null,
+    analysisNotes: r.extraction_note ?? null,
+    uploadedAt: r.captured_at,
   };
 }
 export function saveDocumentAnalysis(
@@ -171,10 +172,10 @@ export function saveDocumentAnalysis(
   a: { amount: number | null; tracking: string | null; docType: string; confidence: number; notes: string },
 ): void {
   db().run(
-    `UPDATE claim_documents
-       SET analyzed = 1, extracted_amount = ?, extracted_tracking = ?, extracted_doc_type = ?,
-           analysis_confidence = ?, analysis_notes = ?
-     WHERE id = ?`,
+    `UPDATE evidence_items
+       SET is_extracted = 1, extracted_value_usd = ?, extracted_shipment_ref = ?, extracted_kind = ?,
+           extraction_score = ?, extraction_note = ?
+     WHERE evidence_id = ?`,
     [a.amount, a.tracking, a.docType, a.confidence, a.notes, docId],
   );
 }
@@ -184,10 +185,10 @@ export function saveDocumentAnalysis(
 // ---------------------------------------------------------------------------
 export function getTrackingEvents(claimId: number): TrackingEvent[] {
   return db()
-    .all<Record<string, any>>('SELECT ts, status, location FROM tracking_events WHERE claim_id = ? ORDER BY ts ASC', [
+    .all<Record<string, any>>('SELECT scanned_at, scan_status, scan_locale FROM scan_history WHERE case_id = ? ORDER BY scanned_at ASC', [
       claimId,
     ])
-    .map((r) => ({ timestamp: r.ts, status: r.status, location: r.location }));
+    .map((r) => ({ timestamp: r.scanned_at, status: r.scan_status, location: r.scan_locale }));
 }
 
 // ---------------------------------------------------------------------------
@@ -195,42 +196,42 @@ export function getTrackingEvents(claimId: number): TrackingEvent[] {
 // ---------------------------------------------------------------------------
 export function listKnowledge(withEmbeddings = false): KnowledgeChunk[] {
   return db()
-    .all<Record<string, any>>('SELECT * FROM knowledge_chunks ORDER BY id')
+    .all<Record<string, any>>('SELECT * FROM policy_chunks ORDER BY chunk_id')
     .map((r) => ({
-      id: r.id,
-      category: r.category,
-      title: r.title,
-      text: r.text,
-      source: r.source,
-      embedding: withEmbeddings && r.embedding ? (JSON.parse(r.embedding) as number[]) : undefined,
+      id: r.chunk_id,
+      category: r.chunk_kind,
+      title: r.heading,
+      text: r.body,
+      source: r.citation,
+      embedding: withEmbeddings && r.vector ? (JSON.parse(r.vector) as number[]) : undefined,
     }));
 }
 export function knowledgeNeedingEmbedding(expectedDims: number): { id: number; text: string; title: string }[] {
   return db()
-    .all<Record<string, any>>('SELECT id, title, text, embedding FROM knowledge_chunks ORDER BY id')
+    .all<Record<string, any>>('SELECT chunk_id, heading, body, vector FROM policy_chunks ORDER BY chunk_id')
     .filter((r) => {
-      if (!r.embedding) return true;
+      if (!r.vector) return true;
       try {
-        return (JSON.parse(r.embedding) as number[]).length !== expectedDims;
+        return (JSON.parse(r.vector) as number[]).length !== expectedDims;
       } catch {
         return true;
       }
     })
-    .map((r) => ({ id: r.id, text: r.text, title: r.title }));
+    .map((r) => ({ id: r.chunk_id, text: r.body, title: r.heading }));
 }
 export function saveEmbedding(id: number, vec: number[]): void {
-  db().run('UPDATE knowledge_chunks SET embedding = ? WHERE id = ?', [JSON.stringify(vec), id]);
+  db().run('UPDATE policy_chunks SET vector = ? WHERE chunk_id = ?', [JSON.stringify(vec), id]);
 }
 
 // ---------------------------------------------------------------------------
-// Decisions + audit
+// Adjudications + ledger
 // ---------------------------------------------------------------------------
 export function insertDecision(d: ClaimDecision): number {
   const r = db().run(
-    `INSERT INTO agent_decisions
-       (claim_id, decision, resulting_status, confidence, paid_amount, denial_reason,
-        missing_doc_type_ids, escalation_reason, reasoning, flags, citations, preflights, gates,
-        model, used_real_model, input_tokens, output_tokens, took_ms, decided_at)
+    `INSERT INTO adjudications
+       (case_id, verdict, resulting_state, certainty, award_usd, refusal_basis,
+        requested_evidence, referral_basis, rationale, signals, retrieved, gate_checks, guardrails,
+        engine, engine_is_live, prompt_tokens, completion_tokens, elapsed_ms, ruled_at)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       d.claimId, d.decision, d.resultingStatus, d.confidence, d.paidAmount ?? null, d.denialReason ?? null,
@@ -244,12 +245,12 @@ export function insertDecision(d: ClaimDecision): number {
 
 export function insertChange(claimId: number, oldStatus: string | null, newStatus: string, note: string): void {
   db().run(
-    'INSERT INTO agent_changes (claim_id, change_type, old_status, new_status, note, created_at) VALUES (?,?,?,?,?,?)',
-    [claimId, 'AI_AGENT', oldStatus, newStatus, note, new Date().toISOString()],
+    'INSERT INTO case_ledger (case_id, actor, from_state, to_state, memo, logged_at) VALUES (?,?,?,?,?,?)',
+    [claimId, 'agent', oldStatus, newStatus, note, new Date().toISOString()],
   );
 }
 
-export function insertBacktestRun(s: {
+export function insertEvalRun(s: {
   runId: string;
   total: number;
   agreed: number;
@@ -261,7 +262,7 @@ export function insertBacktestRun(s: {
   finishedAt: string;
 }): void {
   db().run(
-    `INSERT INTO backtest_runs (run_id, total, agreed, accuracy, avg_confidence, avg_took_ms, matrix, rows, finished_at)
+    `INSERT INTO eval_runs (eval_id, scored, matched, hit_rate, mean_certainty, mean_elapsed_ms, matrix, detail, completed_at)
      VALUES (?,?,?,?,?,?,?,?,?)`,
     [s.runId, s.total, s.agreed, s.accuracy, s.avgConfidence, s.avgTookMs, JSON.stringify(s.matrix), JSON.stringify(s.rows), s.finishedAt],
   );
@@ -269,7 +270,7 @@ export function insertBacktestRun(s: {
 
 export function getLastDecision(claimId: number): ClaimDecision | null {
   const r = db().get<Record<string, any>>(
-    'SELECT * FROM agent_decisions WHERE claim_id = ? ORDER BY decided_at DESC, id DESC LIMIT 1',
+    'SELECT * FROM adjudications WHERE case_id = ? ORDER BY ruled_at DESC, adjudication_id DESC LIMIT 1',
     [claimId],
   );
   return r ? mapDecision(r) : null;
@@ -284,24 +285,24 @@ function mapDecision(r: Record<string, any>): ClaimDecision {
     }
   };
   return {
-    claimId: r.claim_id,
-    decision: r.decision,
-    resultingStatus: r.resulting_status,
-    confidence: r.confidence,
-    paidAmount: r.paid_amount ?? null,
-    denialReason: r.denial_reason ?? null,
-    missingDocTypeIds: parse(r.missing_doc_type_ids, []),
-    escalationReason: r.escalation_reason ?? null,
-    reasoning: r.reasoning,
-    flags: parse(r.flags, []),
-    citations: parse(r.citations, []),
-    preflights: parse(r.preflights, []),
-    gates: parse(r.gates, []),
-    model: r.model,
-    usedRealModel: !!r.used_real_model,
-    inputTokens: r.input_tokens,
-    outputTokens: r.output_tokens,
-    tookMs: r.took_ms,
-    decidedAt: r.decided_at,
+    claimId: r.case_id,
+    decision: r.verdict,
+    resultingStatus: r.resulting_state,
+    confidence: r.certainty,
+    paidAmount: r.award_usd ?? null,
+    denialReason: r.refusal_basis ?? null,
+    missingDocTypeIds: parse(r.requested_evidence, []),
+    escalationReason: r.referral_basis ?? null,
+    reasoning: r.rationale,
+    flags: parse(r.signals, []),
+    citations: parse(r.retrieved, []),
+    preflights: parse(r.gate_checks, []),
+    gates: parse(r.guardrails, []),
+    model: r.engine,
+    usedRealModel: !!r.engine_is_live,
+    inputTokens: r.prompt_tokens,
+    outputTokens: r.completion_tokens,
+    tookMs: r.elapsed_ms,
+    decidedAt: r.ruled_at,
   };
 }

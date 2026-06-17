@@ -149,10 +149,10 @@ export function getDb(): SqlDb {
 export function isSeeded(db: SqlDb): boolean {
   try {
     const row = db.get<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='claims'",
+      "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name='cases'",
     );
     if (!row || row.n === 0) return false;
-    const c = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM claims');
+    const c = db.get<{ n: number }>('SELECT COUNT(*) AS n FROM cases');
     return (c?.n ?? 0) > 0;
   } catch {
     return false;
